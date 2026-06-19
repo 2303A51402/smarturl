@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -96,7 +98,7 @@ app.add_middleware(
 # ── Schemas ───────────────────────────────────────────────────────────────────
 class ShortenRequest(BaseModel):
     url: str
-    custom_alias: str | None = None
+    custom_alias: Optional[str] = None
 
 class URLResponse(BaseModel):
     short_code: str
