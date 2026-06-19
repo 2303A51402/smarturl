@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SmartURL — AI-Powered URL Shortener</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root {
+    --bg: #0d0d0d;
+    --surface: #161616;
+    --card: #1e1e1e;
+    --border: rgba(255,255,255,0.08);
+    --accent: #7c6af7;
+    --accent-light: #a89df9;
+    --accent-dim: rgba(124,106,247,0.15);
+    --text: #f0f0f0;
+    --muted: #888;
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --font: 'Inter', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; }
+
+  /* Layout */
+  .app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+  .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 24px 16px; display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  .main { padding: 32px; overflow-y: auto; }
+
+  /* Sidebar */
+  .logo { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; padding: 0 8px 20px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+  .logo span { color: var(--accent); }
+  .nav-btn { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 13.5px; width: 100%; text-align: left; transition: all 0.15s; font-family: var(--font); }
+  .nav-btn:hover { background: var(--card); color: var(--text); }
+  .nav-btn.active { background: var(--accent-dim); color: var(--accent-light); }
+  .nav-icon { font-size: 16px; }
+
+  /* Pages */
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* Headings */
+  .page-title { font-size: 22px; font-weight: 600; letter-spacing: -0.4px; margin-bottom: 4px; }
+  .page-sub { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
+
+  /* Cards */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; }
+  .card-sm { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+
+  /* Stat grid */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 28px; }
+  .stat-num { font-size: 30px; font-weight: 600; letter-spacing: -1px; }
+  .stat-label { font-size: 12px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* Form */
+  .shorten-form { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .input { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; color: var(--text); font-size: 14px; font-family: var(--font); outline: none; transition: border 0.15s; }
+  .input:focus { border-color: var(--accent); }
+  .input-url { flex: 1; min-width: 200px; }
+  .input-alias { width: 160px; }
+  .btn { padding: 10px 18px; border-radius: 8px; border: none; font-size: 14px; font-weight: 500; cursor: pointer; font-family: var(--font); transition: all 0.15s; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: #6a59e0; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-danger { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.25); padding: 5px 10px; font-size: 12px; border-radius: 6px; }
+  .btn-copy { background: var(--accent-dim); color: var(--accent-light); border: none; padding: 5px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; font-family: var(--font); }
+
+  /* Result box */
+  .result-box { background: var(--accent-dim); border: 1px solid rgba(124,106,247,0.3); border-radius: 10px; padding: 16px 20px; margin-bottom: 28px; display: none; }
+  .result-box.show { display: block; }
+  .result-short { font-size: 18px; font-weight: 600; color: var(--accent-light); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .result-meta { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; background: rgba(124,106,247,0.2); color: var(--accent-light); }
+
+  /* URL table */
+  .url-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .url-table th { text-align: left; padding: 10px 12px; color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
+  .url-table td { padding: 12px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .url-table tr:last-child td { border-bottom: none; }
+  .url-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .short-link { color: var(--accent-light); font-weight: 600; text-decoration: none; }
+  .short-link:hover { text-decoration: underline; }
+  .orig-url { color: var(--muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .click-badge { display: inline-flex; align-items: center; gap: 4px; background: rgba(34,197,94,0.12); color: var(--green); padding: 3px 8px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .action-row { display: flex; gap: 6px; }
+
+  /* Chart containers */
+  .chart-wrap { position: relative; width: 100%; height: 220px; }
+  .chart-wrap-lg { position: relative; width: 100%; height: 300px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .section-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px; }
+
+  /* Category pills */
+  .cat-grid { display: flex; flex-direction: column; gap: 8px; }
+  .cat-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .cat-bar-bg { flex: 1; background: var(--surface); border-radius: 99px; height: 6px; }
+  .cat-bar { height: 6px; border-radius: 99px; background: var(--accent); }
+  .cat-name { width: 90px; color: var(--muted); font-size: 12px; }
+  .cat-count { width: 28px; text-align: right; font-weight: 600; font-size: 12px; }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 24px; right: 24px; background: #1e1e1e; border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; font-size: 13px; color: var(--text); display: none; box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 999; }
+  .toast.show { display: block; }
+
+  /* Loader */
+  .loader { display: none; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.2); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite; }
+  .loader.show { display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Empty */
+  .empty { text-align: center; padding: 48px 20px; color: var(--muted); font-size: 14px; }
+  .empty-icon { font-size: 36px; margin-bottom: 12px; }
+
+  /* Stats detail page */
+  .back-btn { display: flex; align-items: center; gap: 6px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; font-family: var(--font); margin-bottom: 20px; padding: 0; }
+  .back-btn:hover { color: var(--text); }
+
+  @media (max-width: 720px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    .main { padding: 20px; }
+    .two-col { grid-template-columns: 1fr; }
+    .input-alias { width: 120px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">⚡ <span>Smart</span>URL</div>
+    <button class="nav-btn active" onclick="showPage('shorten')">
+      <span class="nav-icon">🔗</span> Shorten URL
+    </button>
+    <button class="nav-btn" onclick="showPage('dashboard')">
+      <span class="nav-icon">📊</span> Dashboard
+    </button>
+    <button class="nav-btn" onclick="showPage('all-urls')">
+      <span class="nav-icon">📋</span> All URLs
+    </button>
+    <button class="nav-btn" onclick="showPage('api-docs')">
+      <span class="nav-icon">📄</span> API Docs
+    </button>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- ── SHORTEN PAGE ── -->
+    <div class="page active" id="page-shorten">
+      <div class="page-title">Shorten a URL</div>
+      <div class="page-sub">Paste any link. AI auto-tags category and title.</div>
+
+      <div class="card" style="margin-bottom:20px">
+        <div class="shorten-form">
+          <input class="input input-url" id="url-input" placeholder="https://example.com/very/long/url/here" />
+          <input class="input input-alias" id="alias-input" placeholder="custom-alias (optional)" />
+          <button class="btn btn-primary" id="shorten-btn" onclick="shortenURL()">
+            <span id="btn-text">Shorten →</span>
+            <span class="loader" id="btn-loader"></span>
+          </button>
+        </div>
+        <div style="font-size:12px; color:var(--muted)">Custom alias lets you create memorable links like <code style="color:var(--accent-light)">yourdomain.com/my-project</code></div>
+      </div>
+
+      <div class="result-box" id="result-box">
+        <div class="result-short" id="result-short-url">
+          <span id="result-link"></span>
+          <button class="btn-copy" onclick="copyResult()">Copy</button>
+          <span class="tag" id="result-category"></span>
+        </div>
+        <div class="result-meta" id="result-meta"></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Recently Shortened</div>
+        <div id="recent-list"><div class="empty"><div class="empty-icon">🔗</div>No URLs yet. Shorten your first link above!</div></div>
+      </div>
+    </div>
+
+    <!-- ── DASHBOARD PAGE ── -->
+    <div class="page" id="page-dashboard">
+      <div class="page-title">Dashboard</div>
+      <div class="page-sub">Analytics overview across all shortened links.</div>
+
+      <div class="stat-grid" id="dash-stats">
+        <div class="card-sm"><div class="stat-num" id="d-total-urls">—</div><div class="stat-label">Total URLs</div></div>
+        <div class="card-sm"><div class="stat-num" id="d-total-clicks">—</div><div class="stat-label">Total Clicks</div></div>
+        <div class="card-sm"><div class="stat-num" id="d-avg-clicks">—</div><div class="stat-label">Avg Clicks/URL</div></div>
+        <div class="card-sm"><div class="stat-num" id="d-top-cat">—</div><div class="stat-label">Top Category</div></div>
+      </div>
+
+      <div class="two-col">
+        <div class="card">
+          <div class="section-title">Category breakdown</div>
+          <div id="cat-list" class="cat-grid"></div>
+        </div>
+        <div class="card">
+          <div class="section-title">Top 5 URLs by clicks</div>
+          <div id="top-urls-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ALL URLS PAGE ── -->
+    <div class="page" id="page-all-urls">
+      <div class="page-title">All Shortened URLs</div>
+      <div class="page-sub">Click any short code to view detailed click analytics.</div>
+      <div class="card" style="overflow-x:auto">
+        <table class="url-table">
+          <thead>
+            <tr>
+              <th>Short link</th>
+              <th>Title / Original URL</th>
+              <th>Category</th>
+              <th>Clicks</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="url-tbody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── STATS DETAIL PAGE ── -->
+    <div class="page" id="page-stats">
+      <button class="back-btn" onclick="showPage('all-urls')">← Back to all URLs</button>
+      <div class="page-title" id="stats-title">URL Analytics</div>
+      <div class="page-sub" id="stats-sub"></div>
+
+      <div class="stat-grid">
+        <div class="card-sm"><div class="stat-num" id="s-total">—</div><div class="stat-label">Total Clicks</div></div>
+        <div class="card-sm"><div class="stat-num" id="s-cat">—</div><div class="stat-label">AI Category</div></div>
+        <div class="card-sm"><div class="stat-num" id="s-last">—</div><div class="stat-label">Last Clicked</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div class="section-title">Clicks by day</div>
+        <div class="chart-wrap-lg"><canvas id="daily-chart" role="img" aria-label="Clicks by day bar chart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="section-title">Clicks by hour of day</div>
+        <div class="chart-wrap"><canvas id="hourly-chart" role="img" aria-label="Clicks by hour line chart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- ── API DOCS PAGE ── -->
+    <div class="page" id="page-api-docs">
+      <div class="page-title">API Documentation</div>
+      <div class="page-sub">RESTful endpoints — all return JSON. Full Swagger UI at <code style="color:var(--accent-light)">/docs</code></div>
+
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div class="card">
+          <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
+            <span style="background:rgba(34,197,94,0.15); color:var(--green); font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">POST</span>
+            <code style="font-size:14px; color:var(--accent-light)">/api/shorten</code>
+          </div>
+          <div style="font-size:13px; color:var(--muted); margin-bottom:10px">Shorten a URL with optional custom alias. Returns short code, AI title & category.</div>
+          <pre style="background:var(--surface); border-radius:8px; padding:12px; font-size:12px; color:var(--text); overflow-x:auto">{ "url": "https://example.com", "custom_alias": "my-link" }</pre>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
+            <span style="background:rgba(59,130,246,0.15); color:#60a5fa; font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">GET</span>
+            <code style="font-size:14px; color:var(--accent-light)">/api/urls</code>
+          </div>
+          <div style="font-size:13px; color:var(--muted)">List all shortened URLs with click counts. Supports <code>?limit=20&skip=0</code></div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
+            <span style="background:rgba(59,130,246,0.15); color:#60a5fa; font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">GET</span>
+            <code style="font-size:14px; color:var(--accent-light)">/api/stats/{short_code}</code>
+          </div>
+          <div style="font-size:13px; color:var(--muted)">Per-URL analytics: total clicks, daily breakdown, hourly distribution.</div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
+            <span style="background:rgba(59,130,246,0.15); color:#60a5fa; font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">GET</span>
+            <code style="font-size:14px; color:var(--accent-light)">/api/dashboard</code>
+          </div>
+          <div style="font-size:13px; color:var(--muted)">Overall stats: total URLs, total clicks, category breakdown, top 5 URLs.</div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
+            <span style="background:rgba(59,130,246,0.15); color:#60a5fa; font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">GET</span>
+            <code style="font-size:14px; color:var(--accent-light)">/{short_code}</code>
+          </div>
+          <div style="font-size:13px; color:var(--muted)">Redirect to original URL and log the click (302 redirect).</div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
+            <span style="background:rgba(239,68,68,0.15); color:var(--red); font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">DELETE</span>
+            <code style="font-size:14px; color:var(--accent-light)">/api/urls/{short_code}</code>
+          </div>
+          <div style="font-size:13px; color:var(--muted)">Delete a shortened URL permanently.</div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = 'http://localhost:8000';  // same origin — change to http://localhost:8000 for local dev
+let dailyChart = null, hourlyChart = null;
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  const map = { shorten: 0, dashboard: 1, 'all-urls': 2, 'api-docs': 3 };
+  if (map[name] !== undefined)
+    document.querySelectorAll('.nav-btn')[map[name]].classList.add('active');
+
+  if (name === 'dashboard') loadDashboard();
+  if (name === 'all-urls') loadAllURLs();
+  if (name === 'shorten') loadRecent();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, duration = 2500) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), duration);
+}
+
+// ── Shorten ───────────────────────────────────────────────────────────────────
+async function shortenURL() {
+  const url = document.getElementById('url-input').value.trim();
+  const alias = document.getElementById('alias-input').value.trim();
+  if (!url) return toast('Please enter a URL');
+
+  const btn = document.getElementById('shorten-btn');
+  const loader = document.getElementById('btn-loader');
+  document.getElementById('btn-text').style.display = 'none';
+  loader.classList.add('show');
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(API + '/api/shorten', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, custom_alias: alias || null })
+    });
+    const data = await res.json();
+    if (!res.ok) { toast('Error: ' + (data.detail || 'Something went wrong')); return; }
+
+    const box = document.getElementById('result-box');
+    document.getElementById('result-link').textContent = data.short_url;
+    document.getElementById('result-link').setAttribute('data-url', data.short_url);
+    document.getElementById('result-category').textContent = data.ai_category;
+    document.getElementById('result-meta').textContent = `AI Title: "${data.ai_title}" · Original: ${data.original_url.slice(0,60)}${data.original_url.length > 60 ? '…' : ''}`;
+    box.classList.add('show');
+    document.getElementById('url-input').value = '';
+    document.getElementById('alias-input').value = '';
+    loadRecent();
+  } catch(e) {
+    toast('Could not connect to API. Is the backend running?');
+  } finally {
+    document.getElementById('btn-text').style.display = '';
+    loader.classList.remove('show');
+    btn.disabled = false;
+  }
+}
+
+function copyResult() {
+  const link = document.getElementById('result-link').textContent;
+  navigator.clipboard.writeText(link).then(() => toast('✅ Copied to clipboard!'));
+}
+
+async function loadRecent() {
+  const el = document.getElementById('recent-list');
+  try {
+    const res = await fetch(API + '/api/urls?limit=5');
+    const data = await res.json();
+    if (!data.urls.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">🔗</div>No URLs yet. Shorten your first link above!</div>'; return; }
+    el.innerHTML = data.urls.map(u => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:600;color:var(--accent-light);font-size:14px">${window.location.origin}/${u.short_code}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">${u.ai_title} · <span class="tag">${u.ai_category}</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="click-badge">▲ ${u.click_count} clicks</span>
+          <button class="btn-copy" onclick="navigator.clipboard.writeText('${window.location.origin}/${u.short_code}').then(()=>toast('Copied!'))">Copy</button>
+        </div>
+      </div>`).join('');
+  } catch(e) { el.innerHTML = '<div class="empty">Could not load recent URLs</div>'; }
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  try {
+    const res = await fetch(API + '/api/dashboard');
+    const d = await res.json();
+    document.getElementById('d-total-urls').textContent = d.total_urls;
+    document.getElementById('d-total-clicks').textContent = d.total_clicks;
+    document.getElementById('d-avg-clicks').textContent = d.total_urls ? Math.round(d.total_clicks / d.total_urls) : 0;
+    const topCat = Object.entries(d.categories).sort((a,b) => b[1]-a[1])[0];
+    document.getElementById('d-top-cat').textContent = topCat ? topCat[0] : '—';
+
+    // Category bars
+    const maxCat = Math.max(...Object.values(d.categories), 1);
+    document.getElementById('cat-list').innerHTML = Object.entries(d.categories)
+      .sort((a,b) => b[1]-a[1]).slice(0,8)
+      .map(([cat, count]) => `
+        <div class="cat-row">
+          <span class="cat-name">${cat}</span>
+          <div class="cat-bar-bg"><div class="cat-bar" style="width:${Math.round(count/maxCat*100)}%"></div></div>
+          <span class="cat-count">${count}</span>
+        </div>`).join('') || '<div style="color:var(--muted);font-size:13px">No data yet</div>';
+
+    // Top URLs
+    document.getElementById('top-urls-list').innerHTML = d.top_urls.length
+      ? d.top_urls.map((u,i) => `
+          <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+            <span style="color:var(--muted);font-size:12px;width:16px">${i+1}</span>
+            <div style="flex:1;overflow:hidden">
+              <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${u.ai_title}</div>
+              <div style="font-size:11px;color:var(--accent-light)">/${u.short_code}</div>
+            </div>
+            <span class="click-badge">${u.click_count}</span>
+          </div>`).join('')
+      : '<div style="color:var(--muted);font-size:13px;padding:12px 0">No clicks recorded yet</div>';
+  } catch(e) { console.error(e); }
+}
+
+// ── All URLs ──────────────────────────────────────────────────────────────────
+async function loadAllURLs() {
+  const tbody = document.getElementById('url-tbody');
+  try {
+    const res = await fetch(API + '/api/urls?limit=50');
+    const data = await res.json();
+    if (!data.urls.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty"><div class="empty-icon">📋</div>No URLs shortened yet</td></tr>'; return; }
+    tbody.innerHTML = data.urls.map(u => `
+      <tr>
+        <td><a class="short-link" href="/${u.short_code}" target="_blank">/${u.short_code}</a></td>
+        <td>
+          <div style="font-size:13px;font-weight:500">${u.ai_title}</div>
+          <div class="orig-url">${u.original_url}</div>
+        </td>
+        <td><span class="tag">${u.ai_category}</span></td>
+        <td><span class="click-badge">▲ ${u.click_count}</span></td>
+        <td style="color:var(--muted);font-size:12px">${u.created_at.slice(0,10)}</td>
+        <td>
+          <div class="action-row">
+            <button class="btn-copy" onclick="navigator.clipboard.writeText('${window.location.origin}/${u.short_code}').then(()=>toast('Copied!'))">Copy</button>
+            <button class="btn-copy" onclick="loadStats('${u.short_code}')">Stats</button>
+            <button class="btn-danger" onclick="deleteURL('${u.short_code}')">Delete</button>
+          </div>
+        </td>
+      </tr>`).join('');
+  } catch(e) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Failed to load</td></tr>'; }
+}
+
+async function deleteURL(code) {
+  if (!confirm(`Delete /${code}?`)) return;
+  await fetch(API + '/api/urls/' + code, { method: 'DELETE' });
+  toast('Deleted /' + code);
+  loadAllURLs();
+}
+
+// ── Stats Detail ──────────────────────────────────────────────────────────────
+async function loadStats(code) {
+  showPage('stats');
+  try {
+    const res = await fetch(API + '/api/stats/' + code);
+    const d = await res.json();
+
+    document.getElementById('stats-title').textContent = d.ai_title;
+    document.getElementById('stats-sub').textContent = d.original_url;
+    document.getElementById('s-total').textContent = d.total_clicks;
+    document.getElementById('s-cat').textContent = d.ai_category;
+    document.getElementById('s-last').textContent = d.last_clicked ? d.last_clicked.slice(0,10) : 'Never';
+
+    // Daily chart
+    const days = Object.keys(d.daily_clicks);
+    const dayCounts = Object.values(d.daily_clicks);
+    if (dailyChart) dailyChart.destroy();
+    dailyChart = new Chart(document.getElementById('daily-chart'), {
+      type: 'bar',
+      data: { labels: days, datasets: [{ label: 'Clicks', data: dayCounts, backgroundColor: 'rgba(124,106,247,0.5)', borderColor: '#7c6af7', borderWidth: 1.5 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,0.05)' } }, y: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: true } } }
+    });
+
+    // Hourly chart
+    const hours = Array.from({length:24}, (_,i) => i + ':00');
+    const hourCounts = Array.from({length:24}, (_,i) => d.hourly_clicks[String(i)] || 0);
+    if (hourlyChart) hourlyChart.destroy();
+    hourlyChart = new Chart(document.getElementById('hourly-chart'), {
+      type: 'line',
+      data: { labels: hours, datasets: [{ label: 'Clicks', data: hourCounts, borderColor: '#a89df9', backgroundColor: 'rgba(124,106,247,0.1)', tension: 0.4, fill: true, pointRadius: 3 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#888', maxRotation: 0 }, grid: { color: 'rgba(255,255,255,0.05)' } }, y: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: true } } }
+    });
+  } catch(e) { console.error(e); }
+}
+
+// ── Keyboard shortcut ─────────────────────────────────────────────────────────
+document.getElementById('url-input').addEventListener('keydown', e => { if (e.key === 'Enter') shortenURL(); });
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadRecent();
+</script>
+</body>
+</html>
