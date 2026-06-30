@@ -144,6 +144,9 @@
     <button class="nav-btn" onclick="showPage('api-docs')">
       <span class="nav-icon">📄</span> API Docs
     </button>
+    <button class="nav-btn" onclick="showPage('account')" id="nav-account-btn">
+      <span class="nav-icon">👤</span> <span id="nav-account-label">Login / Signup</span>
+    </button>
   </aside>
 
   <!-- Main -->
@@ -305,6 +308,44 @@
       </div>
     </div>
 
+    <!-- ── ACCOUNT PAGE ── -->
+    <div class="page" id="page-account">
+      <div class="page-title">Account</div>
+      <div class="page-sub" id="account-sub">Log in or create an account to save your links and view only your own analytics.</div>
+
+      <!-- Logged OUT view -->
+      <div id="auth-forms" style="display:flex; gap:20px; flex-wrap:wrap;">
+        <div class="card" style="flex:1; min-width:280px;">
+          <div class="section-title">Log In</div>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <input class="input" id="login-email" type="email" placeholder="Email" />
+            <input class="input" id="login-password" type="password" placeholder="Password" />
+            <button class="btn btn-primary" onclick="loginUser()">Log In</button>
+          </div>
+        </div>
+        <div class="card" style="flex:1; min-width:280px;">
+          <div class="section-title">Sign Up</div>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <input class="input" id="signup-email" type="email" placeholder="Email" />
+            <input class="input" id="signup-password" type="password" placeholder="Password (min 8 characters)" />
+            <button class="btn btn-primary" onclick="signupUser()">Create Account</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logged IN view -->
+      <div id="account-loggedin" style="display:none">
+        <div class="card" style="margin-bottom:20px">
+          <div class="section-title">Signed in as <span id="account-email" style="color:var(--accent-light)"></span></div>
+          <button class="btn-danger" onclick="logoutUser()">Log Out</button>
+        </div>
+        <div class="card">
+          <div class="section-title">My Links</div>
+          <div id="my-links-list"><div class="empty">Loading…</div></div>
+        </div>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -319,13 +360,14 @@ function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
-  const map = { shorten: 0, dashboard: 1, 'all-urls': 2, 'api-docs': 3 };
+  const map = { shorten: 0, dashboard: 1, 'all-urls': 2, 'api-docs': 3, account: 4 };
   if (map[name] !== undefined)
     document.querySelectorAll('.nav-btn')[map[name]].classList.add('active');
 
   if (name === 'dashboard') loadDashboard();
   if (name === 'all-urls') loadAllURLs();
   if (name === 'shorten') loadRecent();
+  if (name === 'account') { updateAuthUI(); if (getToken()) loadMyLinks(); }
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -334,6 +376,101 @@ function toast(msg, duration = 2500) {
   el.textContent = msg;
   el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), duration);
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+function getToken() { return localStorage.getItem('smarturl_token'); }
+function getEmail() { return localStorage.getItem('smarturl_email'); }
+function setSession(token, email) {
+  localStorage.setItem('smarturl_token', token);
+  localStorage.setItem('smarturl_email', email);
+}
+function clearSession() {
+  localStorage.removeItem('smarturl_token');
+  localStorage.removeItem('smarturl_email');
+}
+function authHeader() {
+  const t = getToken();
+  return t ? { 'Authorization': 'Bearer ' + t } : {};
+}
+
+function updateAuthUI() {
+  const token = getToken();
+  const navLabel = document.getElementById('nav-account-label');
+  if (token) {
+    document.getElementById('auth-forms').style.display = 'none';
+    document.getElementById('account-loggedin').style.display = '';
+    document.getElementById('account-email').textContent = getEmail();
+    navLabel.textContent = getEmail();
+  } else {
+    document.getElementById('auth-forms').style.display = 'flex';
+    document.getElementById('account-loggedin').style.display = 'none';
+    navLabel.textContent = 'Login / Signup';
+  }
+}
+
+async function signupUser() {
+  const email = document.getElementById('signup-email').value.trim();
+  const password = document.getElementById('signup-password').value;
+  if (!email || !password) return toast('Enter an email and password');
+  if (password.length < 8) return toast('Password must be at least 8 characters');
+  try {
+    const res = await fetch(API + '/api/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (!res.ok) { toast('Error: ' + (data.detail || 'Signup failed')); return; }
+    setSession(data.access_token, data.email);
+    toast('✅ Account created!');
+    updateAuthUI();
+    loadMyLinks();
+  } catch (e) { toast('Could not connect to API'); }
+}
+
+async function loginUser() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  if (!email || !password) return toast('Enter an email and password');
+  try {
+    const res = await fetch(API + '/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (!res.ok) { toast('Error: ' + (data.detail || 'Login failed')); return; }
+    setSession(data.access_token, data.email);
+    toast('✅ Logged in!');
+    updateAuthUI();
+    loadMyLinks();
+  } catch (e) { toast('Could not connect to API'); }
+}
+
+function logoutUser() {
+  clearSession();
+  toast('Logged out');
+  updateAuthUI();
+}
+
+async function loadMyLinks() {
+  const list = document.getElementById('my-links-list');
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const res = await fetch(API + '/api/my-urls?limit=50', { headers: authHeader() });
+    if (res.status === 401) { clearSession(); updateAuthUI(); return; }
+    const data = await res.json();
+    if (!data.urls.length) { list.innerHTML = '<div class="empty">You haven\'t created any links yet.</div>'; return; }
+    list.innerHTML = data.urls.map(u => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border)">
+        <div>
+          <div style="color:var(--accent-light)">/${u.short_code}</div>
+          <div style="font-size:12px; color:var(--muted)">${u.ai_title} · ${u.click_count} clicks</div>
+        </div>
+        <button class="btn-danger" onclick="deleteURL('${u.short_code}')">Delete</button>
+      </div>`).join('');
+  } catch (e) { list.innerHTML = '<div class="empty">Failed to load</div>'; }
 }
 
 // ── Shorten ───────────────────────────────────────────────────────────────────
@@ -351,7 +488,7 @@ async function shortenURL() {
   try {
     const res = await fetch(API + '/api/shorten', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({ url, custom_alias: alias || null })
     });
     const data = await res.json();
@@ -467,9 +604,13 @@ async function loadAllURLs() {
 
 async function deleteURL(code) {
   if (!confirm(`Delete /${code}?`)) return;
-  await fetch(API + '/api/urls/' + code, { method: 'DELETE' });
+  if (!getToken()) { toast('Please log in to delete links'); showPage('account'); return; }
+  const res = await fetch(API + '/api/urls/' + code, { method: 'DELETE', headers: authHeader() });
+  if (res.status === 401) { toast('Please log in to delete links'); showPage('account'); return; }
+  if (res.status === 403) { toast('You can only delete links you own'); return; }
   toast('Deleted /' + code);
-  loadAllURLs();
+  if (document.getElementById('page-all-urls').classList.contains('active')) loadAllURLs();
+  if (document.getElementById('page-account').classList.contains('active')) loadMyLinks();
 }
 
 // ── Stats Detail ──────────────────────────────────────────────────────────────
@@ -511,6 +652,7 @@ async function loadStats(code) {
 document.getElementById('url-input').addEventListener('keydown', e => { if (e.key === 'Enter') shortenURL(); });
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+updateAuthUI();
 loadRecent();
 </script>
 </body>
