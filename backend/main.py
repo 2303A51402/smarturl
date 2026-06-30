@@ -1,20 +1,39 @@
 from typing import Optional, Any
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
-from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime
-import hashlib, random, string, re
+from datetime import datetime, timedelta
+import hashlib, random, string, re, os
 from collections import Counter
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+
+# ── Auth config ─────────────────────────────────────────────────────────────
+# In production, set SECRET_KEY as an environment variable (e.g. on Render).
+SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_HOURS = 24
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login", auto_error=False)
 
 # ── Database setup ────────────────────────────────────────────────────────────
 DATABASE_URL = "sqlite:///./urls.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    email         = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    created_at    = Column(DateTime, default=datetime.utcnow)
 
 class URLRecord(Base):
     __tablename__ = "urls"
@@ -26,6 +45,7 @@ class URLRecord(Base):
     created_at   = Column(DateTime, default=datetime.utcnow)
     click_count  = Column(Integer, default=0)
     last_clicked = Column(DateTime, nullable=True)
+    owner_id     = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
 class ClickLog(Base):
     __tablename__ = "clicks"
@@ -78,6 +98,62 @@ def generate_short_code(url: str, length: int = 6) -> str:
 def random_code(length: int = 6) -> str:
     return "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
+# ── Auth helpers ──────────────────────────────────────────────────────────────
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(user_id: int) -> str:
+    expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    payload = {"sub": str(user_id), "exp": expire}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> "User":
+    """Required auth — raises 401 if no valid token is provided."""
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if token is None:
+        raise credentials_exception
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user is None:
+            raise credentials_exception
+        return user
+    finally:
+        db.close()
+
+def get_optional_user(token: Optional[str] = Depends(oauth2_scheme)) -> Optional["User"]:
+    """Optional auth — returns None instead of raising, so anonymous shortening still works."""
+    if token is None:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+    except JWTError:
+        return None
+
+    db = SessionLocal()
+    try:
+        return db.query(User).filter(User.id == int(user_id)).first()
+    finally:
+        db.close()
+
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="SmartURL API",
@@ -95,6 +171,19 @@ app.add_middleware(
 )
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    email: str
+
 class ShortenRequest(BaseModel):
     url: str
     custom_alias: Optional[str] = None
@@ -113,9 +202,52 @@ class URLResponse(BaseModel):
 def root():
     return {"status": "SmartURL API is running 🚀", "docs": "/docs"}
 
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+@app.post("/api/signup", response_model=TokenResponse, tags=["Auth"])
+def signup(body: SignupRequest):
+    """Register a new user and return a JWT access token."""
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.email == body.email).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already registered")
+
+        if len(body.password) < 8:
+            raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+        user = User(email=body.email, hashed_password=hash_password(body.password))
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        token = create_access_token(user.id)
+        return TokenResponse(access_token=token, email=user.email)
+    finally:
+        db.close()
+
+@app.post("/api/login", response_model=TokenResponse, tags=["Auth"])
+def login(body: LoginRequest):
+    """Authenticate a user and return a JWT access token."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == body.email).first()
+        if not user or not verify_password(body.password, user.hashed_password):
+            raise HTTPException(status_code=401, detail="Incorrect email or password")
+
+        token = create_access_token(user.id)
+        return TokenResponse(access_token=token, email=user.email)
+    finally:
+        db.close()
+
+@app.get("/api/me", tags=["Auth"])
+def get_me(current_user: User = Depends(get_current_user)):
+    """Return the currently authenticated user's profile."""
+    return {"id": current_user.id, "email": current_user.email, "created_at": current_user.created_at.isoformat()}
+
 @app.post("/api/shorten", response_model=URLResponse, tags=["URLs"])
-def shorten_url(body: ShortenRequest, request: Request):
-    """Shorten a URL with optional custom alias. AI auto-categorises the link."""
+def shorten_url(body: ShortenRequest, request: Request, current_user: Optional[User] = Depends(get_optional_user)):
+    """Shorten a URL with optional custom alias. AI auto-categorises the link.
+    Works anonymously, but if logged in, the link is attached to your account."""
     db = SessionLocal()
     try:
         url = body.url.strip()
@@ -143,6 +275,7 @@ def shorten_url(body: ShortenRequest, request: Request):
             custom_alias=alias,
             ai_title=ai_title,
             ai_category=ai_category,
+            owner_id=current_user.id if current_user else None,
         )
         db.add(record)
         db.commit()
@@ -157,6 +290,32 @@ def shorten_url(body: ShortenRequest, request: Request):
             created_at=record.created_at.isoformat(),
             click_count=0,
         )
+    finally:
+        db.close()
+
+@app.get("/api/my-urls", tags=["URLs"])
+def list_my_urls(limit: int = 20, skip: int = 0, current_user: User = Depends(get_current_user)):
+    """List only the URLs created by the currently authenticated user. Requires login."""
+    db = SessionLocal()
+    try:
+        query = db.query(URLRecord).filter(URLRecord.owner_id == current_user.id)
+        total = query.count()
+        records = query.order_by(URLRecord.created_at.desc()).offset(skip).limit(limit).all()
+        return {
+            "total": total,
+            "urls": [
+                {
+                    "short_code": r.short_code,
+                    "original_url": r.original_url,
+                    "ai_title": r.ai_title,
+                    "ai_category": r.ai_category,
+                    "created_at": r.created_at.isoformat(),
+                    "click_count": r.click_count,
+                    "last_clicked": r.last_clicked.isoformat() if r.last_clicked else None,
+                }
+                for r in records
+            ],
+        }
     finally:
         db.close()
 
@@ -250,13 +409,15 @@ def dashboard():
         db.close()
 
 @app.delete("/api/urls/{short_code}", tags=["URLs"])
-def delete_url(short_code: str):
-    """Delete a shortened URL."""
+def delete_url(short_code: str, current_user: User = Depends(get_current_user)):
+    """Delete a shortened URL. Requires login, and you can only delete links you own."""
     db = SessionLocal()
     try:
         record = db.query(URLRecord).filter(URLRecord.short_code == short_code).first()
         if not record:
             raise HTTPException(status_code=404, detail="Short code not found")
+        if record.owner_id is not None and record.owner_id != current_user.id:
+            raise HTTPException(status_code=403, detail="You do not have permission to delete this link")
         db.delete(record)
         db.commit()
         return {"message": f"Deleted {short_code}"}

@@ -5,3 +5,7 @@ pydantic
 python-multipart
 httpx
 aiofiles
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt<4.0.0
+email-validator
